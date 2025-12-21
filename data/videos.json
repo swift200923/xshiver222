@@ -1,0 +1,38 @@
+[
+  {
+    "id": "sample-001",
+    "title": "Sample Video 1",
+    "description": "Test video",
+    "thumbnailUrl": "https://via.placeholder.com/640x360/1",
+    "embedUrl": "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    "category": "Viral",
+    "duration": "10:00",
+    "tags": [
+      "sample"
+    ]
+  },
+  {
+    "id": "sample-002",
+    "title": "Sample Video 2",
+    "description": "Test video",
+    "thumbnailUrl": "https://via.placeholder.com/640x360/2",
+    "embedUrl": "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    "category": "Viral",
+    "duration": "10:00",
+    "tags": [
+      "sample"
+    ]
+  },
+  {
+    "id": "sample-003",
+    "title": "Sample Video 3",
+    "description": "Test video",
+    "thumbnailUrl": "https://via.placeholder.com/640x360/3",
+    "embedUrl": "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    "category": "Viral",
+    "duration": "10:00",
+    "tags": [
+      "sample"
+    ]
+  }
+]
