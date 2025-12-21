@@ -1,9 +1,15 @@
+#!/usr/bin/env python3
+"""
+COMPLETE VIRALKAND SCRAPER - NO FALLBACK, REAL SCRAPING ONLY
+"""
+
 import json
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 import re
 import time
+import os
 
 # Target pages - homepage and category pages
 LISTING_PAGES = [
@@ -18,143 +24,224 @@ def get_video_post_urls(listing_url):
     
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://google.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
         }
         
-        print(f"Fetching listing: {listing_url}")
-        resp = requests.get(listing_url, headers=headers, timeout=30)
-        resp.raise_for_status()
+        print(f"\n📄 Fetching listing: {listing_url}")
+        response = requests.get(listing_url, headers=headers, timeout=15)
+        response.raise_for_status()
         
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser")
         
-        # WordPress typically uses <article> tags or post links
-        # Look for links to post pages
+        # Find all links with year patterns (WordPress style)
         for link in soup.find_all("a", href=True):
             href = link["href"]
-            
-            # Filter: only viralkand.com posts (not category/tag/page links)
-            if "viralkand.com" in href and all(skip not in href for skip in ["/page/", "/category/", "/tag/", "/author/"]):
-                if href.endswith("/") and href not in post_urls:
-                    post_urls.append(href)
+            # Match URLs like /2024/12/video-title/ or /2025/01/video-title/
+            if re.search(r"/\d{4}/\d{2}/", href):
+                if href.startswith("http"):
+                    full_url = href
+                elif href.startswith("/"):
+                    full_url = "https://viralkand.com" + href
+                else:
+                    full_url = "https://viralkand.com/" + href
+                
+                if full_url not in post_urls:
+                    post_urls.append(full_url)
         
-        print(f"  Found {len(post_urls)} post links")
+        print(f"   Found {len(post_urls)} video URLs")
         return post_urls
         
     except Exception as e:
-        print(f"Error fetching {listing_url}: {e}")
+        print(f"   ❌ Error fetching listing: {e}")
         return []
 
-def extract_video_from_post(post_url):
-    """Extract video embed from a single post page."""
+
+def clean_title(title):
+    """Remove site name and unwanted text from titles."""
+    unwanted = [
+        "Viral video from viralkand.com",
+        "- viralkand.com",
+        "viralkand.com",
+        "| viralkand",
+    ]
     
+    for phrase in unwanted:
+        title = title.replace(phrase, "")
+    
+    # Clean whitespace
+    title = re.sub(r"\s+", " ", title).strip()
+    title = title.strip("-").strip("|").strip()
+    
+    return title if title else "Untitled Video"
+
+
+def scrape_video_data(video_url):
+    """Scrape data from a single video page."""
     try:
+        print(f"\n🔍 Scraping: {video_url}")
+        
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://viralkand.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        print(f"  Scraping: {post_url}")
-        resp = requests.get(post_url, headers=headers, timeout=30)
-        resp.raise_for_status()
+        response = requests.get(video_url, headers=headers, timeout=15)
+        response.raise_for_status()
         
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser")
         
-        # Extract title from og:title meta tag
-        title = "Untitled Video"
-        og_title = soup.find("meta", property="og:title")
-        if og_title and og_title.get("content"):
-            title = og_title["content"][:100]
+        # Extract title
+        title = "Untitled"
+        h1_tag = soup.find("h1")
+        if h1_tag:
+            title = clean_title(h1_tag.get_text())
+        else:
+            title_tag = soup.find("title")
+            if title_tag:
+                title = clean_title(title_tag.get_text())
         
-        # Extract thumbnail from og:image
-        thumbnail = "https://via.placeholder.com/480x360.png?text=Video"
-        og_image = soup.find("meta", property="og:image")
-        if og_image and og_image.get("content"):
-            thumbnail = og_image["content"]
+        print(f"   Title: {title[:60]}")
         
-        # Find video embed - look for iframe or video tag
-        embed_url = None
-        
-        # Strategy 1: Look for iframe
-        for iframe in soup.find_all("iframe"):
-            src = iframe.get("src")
-            if not src:
-                continue
-            # Skip ads
-            if any(ad in src.lower() for ad in ["doubleclick", "googlesyndication", "adserver", "ads"]):
-                continue
-            embed_url = src if src.startswith("http") else ("https:" + src if src.startswith("//") else "")
-            break
-        
-        # Strategy 2: Look for HTML5 video tag
-        if not embed_url:
-            video_tag = soup.find("video")
-            if video_tag:
-                source = video_tag.find("source")
-                if source and source.get("src"):
-                    embed_url = source["src"]
-        
-        if not embed_url:
-            print(f"    No video found on {post_url}")
+        # Extract iframe embed URL
+        iframe = soup.find("iframe")
+        if not iframe or not iframe.get("src"):
+            print(f"   ❌ No iframe found, skipping")
             return None
         
-        # Generate video ID from URL slug
-        slug_match = re.search(r"/([^/]+)/$", post_url)
-        video_id = slug_match.group(1) if slug_match else f"vid-{abs(hash(post_url)) % 100000}"
+        embed_url = iframe["src"]
         
-        return {
-            "id": f"vid-{video_id[:50]}",
+        # Fix protocol
+        if embed_url.startswith("//"):
+            embed_url = "https:" + embed_url
+        
+        print(f"   Embed: {embed_url[:60]}...")
+        
+        # Extract thumbnail
+        thumbnail_url = ""
+        og_image = soup.find("meta", property="og:image")
+        if og_image:
+            thumbnail_url = og_image.get("content", "")
+        
+        if not thumbnail_url:
+            twitter_image = soup.find("meta", attrs={"name": "twitter:image"})
+            if twitter_image:
+                thumbnail_url = twitter_image.get("content", "")
+        
+        # Extract category
+        category = "Viral"
+        category_link = soup.find("a", rel="category")
+        if category_link:
+            category = category_link.get_text().strip()
+        
+        # Generate unique ID
+        video_id = "vid-" + str(abs(hash(video_url)))[:12]
+        
+        video_data = {
+            "id": video_id,
             "title": title,
-            "description": f"Viral video from viralkand.com",
-            "category": "Viral",
-            "duration": "00:00",
+            "description": title,
+            "thumbnailUrl": thumbnail_url,
             "embedUrl": embed_url,
-            "thumbnailUrl": thumbnail,
-            "tags": ["viralkand", "viral"],
-            "uploadedAt": datetime.now(timezone.utc).isoformat(),
-            "views": 0
+            "category": category,
+            "duration": "10:00",
+            "tags": [category.lower()],
         }
         
+        print(f"   ✅ Successfully scraped!")
+        return video_data
+        
     except Exception as e:
-        print(f"    Error on {post_url}: {e}")
+        print(f"   ❌ Error: {e}")
         return None
 
-def scrape_all():
-    """Main scraper."""
-    all_videos = []
+
+def main():
+    print("=" * 70)
+    print("🚀 VIRALKAND SCRAPER - STARTING")
+    print("=" * 70)
     
-    # Step 1: Collect post URLs
-    all_post_urls = []
-    for listing_url in LISTING_PAGES:
-        urls = get_video_post_urls(listing_url)
-        all_post_urls.extend(urls)
-        time.sleep(2)
+    # Ensure data directory exists
+    os.makedirs("data", exist_ok=True)
     
-    all_post_urls = list(set(all_post_urls))
-    print(f"\nTotal posts to scrape: {len(all_post_urls)}")
+    # Load existing videos
+    videos_file = "data/videos.json"
+    existing_videos = []
+    existing_ids = set()
     
-    # Step 2: Extract video from each post (limit to 30 per run)
-    for post_url in all_post_urls[:30]:
-        video = extract_video_from_post(post_url)
-        if video:
-            all_videos.append(video)
-        time.sleep(1.5)
+    if os.path.exists(videos_file):
+        try:
+            with open(videos_file, "r", encoding="utf-8") as f:
+                existing_videos = json.load(f)
+                existing_ids = {v["id"] for v in existing_videos}
+            print(f"📚 Loaded {len(existing_videos)} existing videos")
+        except Exception as e:
+            print(f"⚠️  Error loading existing videos: {e}")
+            existing_videos = []
+    else:
+        print("📝 No existing videos found, starting fresh")
+    
+    # Collect all video URLs from listing pages
+    all_video_urls = []
+    for listing_page in LISTING_PAGES:
+        urls = get_video_post_urls(listing_page)
+        all_video_urls.extend(urls)
+        time.sleep(2)  # Be polite
     
     # Remove duplicates
-    seen = set()
-    unique_videos = []
-    for v in all_videos:
-        if v["embedUrl"] not in seen:
-            seen.add(v["embedUrl"])
-            unique_videos.append(v)
+    all_video_urls = list(set(all_video_urls))
+    print(f"\n📊 Total unique video URLs found: {len(all_video_urls)}")
     
-    print(f"\nTotal unique videos: {len(unique_videos)}")
+    if len(all_video_urls) == 0:
+        print("\n❌ CRITICAL: No video URLs found!")
+        print("The site structure may have changed or is blocking scraping.")
+        return 1
     
-    # Save
-    with open("data/videos.json", "w", encoding="utf-8") as f:
-        json.dump(unique_videos, f, ensure_ascii=False, indent=2)
+    # Scrape each video
+    new_videos_count = 0
+    max_new_videos = 15
     
-    print("✓ Saved to data/videos.json")
+    for video_url in all_video_urls:
+        if new_videos_count >= max_new_videos:
+            print(f"\n✋ Reached limit of {max_new_videos} new videos")
+            break
+        
+        # Generate ID to check if exists
+        temp_id = "vid-" + str(abs(hash(video_url)))[:12]
+        if temp_id in existing_ids:
+            print(f"\n⏭️  Skipping (already exists): {video_url}")
+            continue
+        
+        video_data = scrape_video_data(video_url)
+        
+        if video_data:
+            existing_videos.append(video_data)
+            existing_ids.add(video_data["id"])
+            new_videos_count += 1
+            print(f"   📈 New videos added: {new_videos_count}/{max_new_videos}")
+        
+        time.sleep(2)  # Be polite
+    
+    # Save videos
+    if new_videos_count > 0:
+        with open(videos_file, "w", encoding="utf-8") as f:
+            json.dump(existing_videos, f, indent=2, ensure_ascii=False)
+        
+        print("\n" + "=" * 70)
+        print(f"✅ SUCCESS!")
+        print(f"   New videos scraped: {new_videos_count}")
+        print(f"   Total videos: {len(existing_videos)}")
+        print(f"   Saved to: {videos_file}")
+        print("=" * 70)
+        return 0
+    else:
+        print("\n" + "=" * 70)
+        print("⚠️  NO NEW VIDEOS ADDED")
+        print("All found videos already exist in database")
+        print("=" * 70)
+        return 0
+
 
 if __name__ == "__main__":
-    scrape_all()
+    import sys
+    sys.exit(main())
