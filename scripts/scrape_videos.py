@@ -13,9 +13,7 @@ import os
 
 # Target listing pages to scrape
 LISTING_PAGES = [
-    "https://viralkand.com/",
-    "https://viralkand.com/page/2/",
-    "https://viralkand.com/page/3/",
+    "https://viralkand.com",
 ]
 
 def get_video_post_urls(listing_url):
