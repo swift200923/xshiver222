@@ -1,40 +1,39 @@
-name: Scrape Viralkand Videos
+name: Scrape and update Xshiver videos
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */8 * * *"  # Every 8 hours
-
-permissions:
-  contents: write
+  workflow_dispatch: {}  # manual trigger button
+  # Uncomment below after testing to run daily
+  # schedule:
+  #   - cron: "0 3 * * *"   # 3 AM UTC daily
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
-      
-      - name: Setup Python
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      
+
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
-      
+        run: |
+          pip install requests beautifulsoup4
+
       - name: Run scraper
         run: python scripts/scrape_videos.py
-      
-      - name: Commit and push
+
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/videos.json
           if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "🎥 Updated videos"
-            git push
+            echo "No new videos found"
+            exit 0
           fi
+          git commit -m "bot: update scraped videos [skip ci]"
+          git push
