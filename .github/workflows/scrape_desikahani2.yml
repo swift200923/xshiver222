@@ -2,8 +2,6 @@ name: Scrape Desikahani2
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */8 * * *'
 
 jobs:
   scrape:
@@ -13,6 +11,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
       - uses: actions/setup-python@v5
         with:
@@ -25,6 +25,7 @@ jobs:
       - run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
+          git pull --rebase origin main
           git add data/videos.json
-          git diff --cached --quiet || git commit -m "chore: update desikahani2 videos [skip ci]"
-          git push
+          git diff --cached --quiet || git commit -m "update videos [skip ci]"
+          git push origin main
