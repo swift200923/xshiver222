@@ -18,8 +18,12 @@ jobs:
           node-version: 20
 
       - run: npm install
-
+      - run: npm install
+      - run: npx playwright install chromium
       - run: node scripts/scrape-kaamdesi.js
+
+
+   
 
       - run: |
           git config user.name "github-actions"
