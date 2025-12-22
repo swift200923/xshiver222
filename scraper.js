@@ -4,48 +4,67 @@ const fs = require('fs');
 async function scrapeVideos() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     viewport: { width: 1366, height: 768 }
   });
   
-  // REPLACE WITH YOUR SHADY SITE'S LISTING PAGE
-  const targetUrl = 'https://viralkand.com/'; 
+  const targetUrl = 'https://viralkand.com/'; // CHANGE THIS
   const page = await context.newPage();
   
-  // Wait for Cloudflare/ads to settle (key for shady sites)
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(5000); // Let JS challenges complete
+  await page.waitForTimeout(5000);
   
-  // Click away any overlay ads (common on shady sites)
+  // Kill ALL shady ads first
   await page.evaluate(() => {
-    document.querySelectorAll('iframe, .popup, .overlay, .ad').forEach(el => el.remove());
+    document.querySelectorAll('iframe, .ad, .popup, .overlay, .modal, [class*="ad-"]').forEach(el => el.remove());
   });
   
-  // Find video cards → click to get embed
   const videos = await page.evaluate(() => {
-    const items = Array.from(document.querySelectorAll('a[href*="/watch"], a[href*="/video"], .video-item'));
-    return items.slice(0, 10).map(async (item, i) => {
-      const href = item.href;
-      const title = item.querySelector('h3, h2, .title')?.textContent?.trim() || 'Unknown';
-      const thumb = item.querySelector('img')?.src || '';
+    const results = [];
+    const cards = document.querySelectorAll('a[href*="/watch"], a[href*="/video"], a[href*="/play"], .video-item, article, .post');
+    
+    cards.forEach((card, index) => {
+      const href = card.href || card.getAttribute('href');
+      const title = card.querySelector('h1,h2,h3,h4,.title')?.textContent?.trim() || 'No Title';
+      const thumb = card.querySelector('img')?.src || 
+                   document.querySelector('meta[property="og:image"]')?.content || '';
       
-      // Open detail page in new tab for embed
-      window.open(href, '_blank');
-      return { title, thumb, embed: href, id: i }; // Update embed selector below
+      // PRIORITY 1: Direct embed iframe on listing page
+      let embed = '';
+      const iframes = card.querySelectorAll('iframe[src*="embed"], iframe[src*="player"]');
+      if (iframes.length) {
+        embed = iframes[0].src;
+      }
+      
+      // PRIORITY 2: Detail page URL (for sites without direct embeds)
+      if (!embed) {
+        embed = href;
+      }
+      
+      results.push({
+        title: title.slice(0, 100),
+        thumbnail: thumb,
+        embed: embed,
+        url: href,
+        id: `v${Date.now()}${index}`
+      });
     });
+    
+    return results.slice(0, 15);
   });
   
   await browser.close();
   
-  // Load existing, dedupe, save
+  // Dedupe + save
   let existing = [];
-  try { existing = JSON.parse(fs.readFileSync('data/videos.json', 'utf8')); } catch {}
-  const uniqueVideos = videos.filter(v => 
-    !existing.some(e => e.embed === v.embed)
+  try { existing = JSON.parse(fs.readFileSync('data/videos.json', 'utf8')); } catch (e) {}
+  const newVideos = videos.filter(v => 
+    !existing.some(e => e.embed === v.embed || e.url === v.url)
   );
   
-  fs.writeFileSync('data/videos.json', JSON.stringify([...existing, ...uniqueVideos], null, 2));
-  console.log(`Added ${uniqueVideos.length} new videos`);
+  fs.writeFileSync('data/videos.json', JSON.stringify([...existing, ...newVideos], null, 2));
+  console.log(`✅ Found ${videos.length} videos, added ${newVideos.length} new ones`);
+  console.log('Sample:', JSON.stringify(newVideos.slice(0,2), null, 2));
 }
 
 scrapeVideos();
