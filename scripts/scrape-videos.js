@@ -4,13 +4,13 @@ import { chromium } from "playwright";
 
 /* ===================== CONFIG ===================== */
 
-const BASE = "https://desimyhub.net/latest/"; // 🔁 CHANGE SITE HERE
+const BASE = "https://desimyhub.net";
 const PAGES = [
-  `${BASE}/`,
-  `${BASE}/page/2/`,
+  `${BASE}/latest/`,
+  `${BASE}/latest/page/2/`,
 ];
 
-/* Known ad / junk sources to ignore */
+/* Blocked ad / junk domains */
 const BLOCKED_SRC = [
   "ads",
   "doubleclick",
@@ -63,13 +63,26 @@ async function run() {
 
   const page = await context.newPage();
 
+  /* 🚫 BLOCK ADS / TRACKERS */
+  await page.route("**/*", route => {
+    const url = route.request().url();
+    if (BLOCKED_SRC.some(b => url.includes(b))) {
+      return route.abort();
+    }
+    route.continue();
+  });
+
   for (const url of PAGES) {
     console.log("📄 Listing:", url);
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
-    await page.waitForTimeout(3000);
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
 
-    /* UNIVERSAL CARD SELECTOR (fallback chain) */
+    await page.waitForTimeout(2000);
+
+    /* UNIVERSAL CARD SELECTOR */
     let cards = await page.$$("a.video");
     if (!cards.length) cards = await page.$$("article a[href]");
     if (!cards.length) cards = await page.$$(".post a[href]");
@@ -96,7 +109,7 @@ async function run() {
         const thumbnail =
           (await card.$eval("img", el => el.src).catch(() => "")) || "";
 
-        /* DURATION (optional) */
+        /* DURATION */
         const duration =
           (await card
             .$eval(".time, .clock, .duration", el => el.textContent.trim())
@@ -104,20 +117,30 @@ async function run() {
 
         /* OPEN POST PAGE */
         const post = await context.newPage();
-       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+        await post.route("**/*", route => {
+          const url = route.request().url();
+          if (BLOCKED_SRC.some(b => url.includes(b))) {
+            return route.abort();
+          }
+          route.continue();
+        });
+
+        await post.goto(postUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
 
         await post.waitForTimeout(2000);
 
-        /* EMBED EXTRACTION (FILTER ADS) */
+        /* EMBED EXTRACTION */
         let embedUrl = null;
 
         const iframeUrls = await post.$$eval("iframe", els =>
           els.map(el => el.src).filter(Boolean)
         );
 
-        embedUrl = iframeUrls.find(src => !src.startsWith("blob:") && !src.includes("about:"));
-
-        if (embedUrl && isBlocked(embedUrl)) embedUrl = null;
+        embedUrl = iframeUrls.find(src => !isBlocked(src)) || null;
 
         if (!embedUrl) {
           const videoUrls = await post.$$eval("video source", els =>
@@ -130,7 +153,6 @@ async function run() {
 
         if (!embedUrl || seen.has(embedUrl)) continue;
 
-        /* SAVE */
         results.push({
           id: makeId(embedUrl),
           title,
@@ -146,7 +168,8 @@ async function run() {
 
         seen.add(embedUrl);
         console.log("➕ Added:", title.slice(0, 60));
-      } catch {
+      } catch (err) {
+        console.log("⚠️ Skipped one card");
         continue;
       }
     }
@@ -157,5 +180,11 @@ async function run() {
 
   console.log(`✅ Done. Total videos: ${results.length}`);
 }
+
+/* ⏱ HARD SAFETY EXIT */
+setTimeout(() => {
+  console.error("⏱ Forced exit to prevent hang");
+  process.exit(0);
+}, 4 * 60 * 1000);
 
 run();
