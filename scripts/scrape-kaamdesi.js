@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
-import fetch from "node-fetch";
-import * as cheerio from "cheerio";
+import { chromium } from "playwright";
 
 const BASE = "https://kaamdesi.com";
 const PAGES = [
@@ -27,101 +26,84 @@ function makeId(str) {
   return "vid-" + Buffer.from(str).toString("base64").slice(0, 32);
 }
 
-async function fetchHTML(url) {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      "Referer": "https://google.com",
-    },
-  });
-  return res.text();
-}
-
-async function scrapePost(postUrl) {
-  const html = await fetchHTML(postUrl);
-  const $ = cheerio.load(html);
-
-  let embedUrl = "";
-
-  $("iframe").each((_, el) => {
-    const src = $(el).attr("src");
-    if (src && !src.includes("ads")) {
-      embedUrl = src.startsWith("//") ? "https:" + src : src;
-      return false;
-    }
-  });
-
-  if (!embedUrl) {
-    $("video source").each((_, el) => {
-      const src = $(el).attr("src");
-      if (src) {
-        embedUrl = src;
-        return false;
-      }
-    });
-  }
-
-  return embedUrl || null;
-}
-
 async function run() {
-  console.log("🔍 Scraping kaamdesi.com");
+  console.log("🔍 Scraping kaamdesi.com (Playwright)");
 
   const existing = loadExisting();
   const seen = new Set(existing.map(v => v.embedUrl));
   const results = [...existing];
 
-  for (const page of PAGES) {
-    console.log("📄 Listing:", page);
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+  });
 
-    const html = await fetchHTML(page);
-    const $ = cheerio.load(html);
+  for (const url of PAGES) {
+    console.log("📄 Opening:", url);
+    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
+    await page.waitForTimeout(3000);
 
-    const cards = $("a.video");
-
+    const cards = await page.$$("a.video");
     console.log(`Found ${cards.length} cards`);
 
-    for (let i = 0; i < cards.length; i++) {
-      const el = cards.eq(i);
+    for (const card of cards) {
+      try {
+        const href = await card.getAttribute("href");
+        if (!href) continue;
 
-      const href = el.attr("href");
-      if (!href) continue;
+        const postUrl = href.startsWith("http") ? href : BASE + href;
 
-      const postUrl = href.startsWith("http") ? href : BASE + href;
+        const title =
+          (await card.$eval(".vtitle", el => el.textContent?.trim()).catch(() => null)) ||
+          (await card.getAttribute("title")) ||
+          "Kaamdesi Video";
 
-      const title =
-        el.find(".vtitle").text().trim() ||
-        el.attr("title") ||
-        "Kaamdesi Video";
+        const thumbnail =
+          (await card.$eval("img", el => el.src).catch(() => "")) || "";
 
-      const thumbnail = el.find("img").attr("src") || "";
+        const duration =
+          (await card.$eval(".time.clock", el => el.textContent?.trim()).catch(() => "00:00")) ||
+          "00:00";
 
-      const duration = el.find(".time.clock").text().trim() || "00:00";
+        // open post page
+        const post = await browser.newPage();
+        await post.goto(postUrl, { waitUntil: "networkidle", timeout: 60000 });
+        await post.waitForTimeout(2000);
 
-      const embedUrl = await scrapePost(postUrl);
-      if (!embedUrl || seen.has(embedUrl)) continue;
+        let embedUrl =
+          (await post.$eval("iframe", el => el.src).catch(() => null)) ||
+          (await post.$eval("video source", el => el.src).catch(() => null));
 
-      const video = {
-        id: makeId(embedUrl),
-        title,
-        description: `Video from kaamdesi.com`,
-        category: "Viral",
-        duration,
-        embedUrl,
-        thumbnailUrl: thumbnail,
-        tags: ["kaamdesi"],
-        uploadedAt: new Date().toISOString(),
-        views: 0,
-      };
+        await post.close();
 
-      results.push(video);
-      seen.add(embedUrl);
+        if (!embedUrl || seen.has(embedUrl)) continue;
 
-      console.log("➕ Added:", title.slice(0, 50));
+        const video = {
+          id: makeId(embedUrl),
+          title,
+          description: "Video from kaamdesi.com",
+          category: "Viral",
+          duration,
+          embedUrl,
+          thumbnailUrl: thumbnail,
+          tags: ["kaamdesi"],
+          uploadedAt: new Date().toISOString(),
+          views: 0,
+        };
+
+        results.push(video);
+        seen.add(embedUrl);
+        console.log("➕ Added:", title.slice(0, 50));
+      } catch {
+        continue;
+      }
     }
   }
 
+  await browser.close();
   save(results);
+
   console.log(`✅ Done. Total videos: ${results.length}`);
 }
 
