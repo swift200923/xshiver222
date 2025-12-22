@@ -71,16 +71,13 @@ async function scrapeSite(targetUrl) {
   console.log(`Found ${videos.length} videos on ${targetUrl}`);
   return videos;
 }
-
 async function main() {
   const targetUrls = [
-    // TODO: put your shady listing pages here
- 'https://viralkand.com/page/5/',
-  'https://viralkand.com/page/6/',
-  'https://viralkand.com/page/7/',
-];
-    // 'https://second-site.com/page1',
-  ];
+    'https://viralkand.com/page/5/',
+    'https://viralkand.com/page/6/',
+    'https://viralkand.com/page/7/',
+    'https://viralkand.com/page/8/'
+  ]; // ← no extra comma after last item, no extra ]
 
   let allNew = [];
   for (const url of targetUrls) {
