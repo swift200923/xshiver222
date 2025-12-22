@@ -16,7 +16,7 @@ async function scrapeSite(targetUrl) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
   await page.waitForTimeout(5000);
 
-  // kill overlays/ads
+  // remove shady overlays/ads
   await page.evaluate(() => {
     document
       .querySelectorAll(
@@ -26,8 +26,8 @@ async function scrapeSite(targetUrl) {
   });
 
   const videos = await page.evaluate(() => {
-    // fsiblog: each video is an <article> with a link+thumb+title
-    const cards = document.querySelectorAll('article');
+    // fsiblog: each video is an <article class="post">
+    const cards = document.querySelectorAll('article.post');
 
     const out = [];
     cards.forEach((card, index) => {
@@ -35,23 +35,29 @@ async function scrapeSite(targetUrl) {
       if (!link) return;
 
       const href = link.href || link.getAttribute('href') || '';
+
+      // title usually in h2.entry-title > a
       const titleEl =
-        card.querySelector('h2, h3, .entry-title, .title') ||
-        link.querySelector('h2, h3');
-      const title =
-        titleEl?.textContent?.trim().replace(/\s+/g, ' ') || 'No Title';
+        card.querySelector('h2.entry-title a') ||
+        card.querySelector('h2.entry-title') ||
+        card.querySelector('h2, h3');
+      const rawTitle = titleEl?.textContent || '';
+      const title = rawTitle.trim().replace(/\s+/g, ' ');
 
-      const imgEl = card.querySelector('img');
-      const thumb = imgEl?.src || imgEl?.getAttribute('data-src') || '';
+      // thumbnail from <img> (data-src or src)
+      const imgEl = card.querySelector('img') || link.querySelector('img');
+      const thumb =
+        imgEl?.getAttribute('data-src') ||
+        imgEl?.src ||
+        '';
 
-      // fsiblog uses MMSBaba embeds on detail page,
-      // but for now we just store the post URL as embed target
+      // For now use post URL as embed target
       const embed = href;
 
       if (href) {
         out.push({
           id: `fsi_${Date.now()}_${index}`,
-          title: title.slice(0, 120),
+          title: title || 'Untitled',
           thumbnail: thumb,
           embed,
           url: href,
@@ -59,7 +65,7 @@ async function scrapeSite(targetUrl) {
       }
     });
 
-    // return up to 20 videos from this page
+    // limit per page
     return out.slice(0, 20);
   });
 
@@ -91,6 +97,7 @@ async function main() {
     existing = [];
   }
 
+  // dedupe by embed/url
   const combined = [...existing];
   allNew.forEach((v) => {
     if (!combined.some((e) => e.embed === v.embed || e.url === v.url)) {
