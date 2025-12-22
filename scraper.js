@@ -73,10 +73,10 @@ async function scrapeSite(targetUrl) {
 
 async function main() {
   const targetUrls = [
-    'https://viralkand.com/page/5/',
-    'https://viralkand.com/page/6/',
-    'https://viralkand.com/page/7/',
-    'https://viralkand.com/page/8/',
+    'https://www.fsiblog.cc/page/2/',
+    'https://www.fsiblog.cc/page/3/',
+    'https://www.fsiblog.cc/page/4/',
+    'https://www.fsiblog.cc/page/5/',
   ];
 
   let allNew = [];
