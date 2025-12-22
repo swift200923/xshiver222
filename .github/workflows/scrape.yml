@@ -1,15 +1,16 @@
-name: Scrape Kaamdesi
+name: Scrape Videos
 
 on:
-  schedule:
-    - cron: "0 3 * * *" # once per day
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,16 +19,14 @@ jobs:
           node-version: 20
 
       - run: npm install
-      - run: npm install
+
       - run: npx playwright install chromium
-      - run: node scripts/scrape-kaamdesi.js
 
-
-   
+      - run: node scripts/scrape-videos.js
 
       - run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add data/videos.json
-          git diff --cached --quiet || git commit -m "update videos.json"
+          git diff --cached --quiet || git commit -m "chore: update videos"
           git push
