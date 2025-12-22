@@ -70,10 +70,7 @@ async function scrapeSite(targetUrl) {
 
 async function main() {
   const targetUrls = [
-    'https://www.fsiblog.cc/page/2/',
-    'https://www.fsiblog.cc/page/3/',
-    'https://www.fsiblog.cc/page/4/',
-    'https://www.fsiblog.cc/page/5/',
+    'https://www.fsiblog5.com/',
   ];
 
   let allNew = [];
