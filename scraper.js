@@ -13,59 +13,87 @@ async function scrapeSite(targetUrl) {
 
   const page = await context.newPage();
   console.log('Opening', targetUrl);
-  await page.goto(targetUrl, { waitUntil: 'networkidle' });
+  
+  try {
+    await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+  } catch (e) {
+    console.error('Failed to load', targetUrl, e.message);
+    await browser.close();
+    return [];
+  }
+
   await page.waitForTimeout(5000);
 
-  // remove shady overlays/ads
+  // remove ads/overlays
   await page.evaluate(() => {
     document
       .querySelectorAll(
-        'iframe, .ad, .ads, .popup, .overlay, .modal, [class*="ad-"], [id*="ad-"]'
+        'iframe[src*="ads"], iframe[src*="ad"], .ad, .ads, .popup, .overlay, .modal, [class*="ad-"], [id*="ad-"]'
       )
       .forEach((el) => el.remove());
   });
 
   const videos = await page.evaluate(() => {
-    // fsiblog: each video is an <article class="post">
-    const cards = document.querySelectorAll('article.post');
-
     const out = [];
+    
+    // Try multiple selectors for different site structures
+    const cards = document.querySelectorAll(
+      'article.post, article, .video-item, .post, a[href*="/video"], a[href*="/watch"]'
+    );
+
     cards.forEach((card, index) => {
-      const link = card.querySelector('a');
+      // Get link
+      const link = card.tagName === 'A' ? card : card.querySelector('a');
       if (!link) return;
 
       const href = link.href || link.getAttribute('href') || '';
+      if (!href || href.includes('/tag/') || href.includes('/category/') || href.includes('/video-source/')) return;
 
-      // title usually in h2.entry-title > a
+      // Get title - try multiple selectors
       const titleEl =
         card.querySelector('h2.entry-title a') ||
         card.querySelector('h2.entry-title') ||
-        card.querySelector('h2, h3');
-      const rawTitle = titleEl?.textContent || '';
-      const title = rawTitle.trim().replace(/\s+/g, ' ');
+        card.querySelector('h1, h2, h3, h4') ||
+        link.querySelector('h1, h2, h3, h4') ||
+        card.querySelector('.title, .post-title');
+      
+      const rawTitle = titleEl?.textContent || titleEl?.innerText || '';
+      const title = rawTitle.trim().replace(/\s+/g, ' ').replace(/Viral video from \w+\.com/gi, '');
 
-      // thumbnail from <img> (data-src or src)
-      const imgEl = card.querySelector('img') || link.querySelector('img');
+      // Get thumbnail - try multiple sources
+      const imgEl = 
+        card.querySelector('img') || 
+        link.querySelector('img');
+      
       const thumb =
         imgEl?.getAttribute('data-src') ||
+        imgEl?.getAttribute('data-lazy-src') ||
         imgEl?.src ||
         '';
 
-      // For now use post URL as embed target
-      const embed = href;
+      // Skip if it's a lazy-load placeholder SVG
+      if (thumb.includes('data:image/svg') || !thumb) return;
 
-      if (href) {
+      // Get category if available
+      const categoryEl = card.querySelector('a[rel="category"], .cat-links a, .category a');
+      const category = categoryEl?.textContent?.trim() || 'General';
+
+      if (href && title) {
         out.push({
-          id: `fsi_${Date.now()}_${index}`,
-          title: title || 'Untitled',
-          thumbnail: thumb,
-          embed,
-          url: href,
+          id: `vid_${Date.now()}_${index}`,
+          title: title.slice(0, 150),
+          description: `Video from ${new URL(href).hostname}`,
+          category: category,
+          duration: '00:00',
+          embedUrl: href,
+          thumbnailUrl: thumb,
+          tags: [new URL(href).hostname.replace('www.', '').split('.')[0]],
+          uploadedAt: new Date().toISOString(),
+          views: 0,
         });
       }
     });
 
-    // limit per page
     return out.slice(0, 20);
   });
 
@@ -76,7 +104,10 @@ async function scrapeSite(targetUrl) {
 
 async function main() {
   const targetUrls = [
-    'https://www.fsiblog5.com/',
+    // Add your target pages here
+    'https://viralkand.com/page/2/',
+    'https://www.fsiblog5.com/page/2/',
+    // 'https://www.fsiblog5.com/page/3/',
   ];
 
   let allNew = [];
@@ -97,17 +128,17 @@ async function main() {
     existing = [];
   }
 
-  // dedupe by embed/url
+  // Dedupe by embedUrl/url
   const combined = [...existing];
   allNew.forEach((v) => {
-    if (!combined.some((e) => e.embed === v.embed || e.url === v.url)) {
+    if (!combined.some((e) => e.embedUrl === v.embedUrl || e.url === v.url || e.embedUrl === v.url)) {
       combined.push(v);
     }
   });
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(combined, null, 2), 'utf8');
-  console.log('Wrote', combined.length, 'videos to data/videos.json');
+  console.log(`✅ Wrote ${combined.length} total videos (${allNew.length} new) to data/videos.json`);
 }
 
 main().catch((e) => {
