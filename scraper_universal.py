@@ -1,40 +1,36 @@
-# scraper_universal.py - WITH AD FILTERING
+# scraper_universal.py - EXTRACT VIDEO PLAYERS ONLY
 import requests
 from bs4 import BeautifulSoup
 import json
 from datetime import datetime
 import time
 import os
+import re
 
 SITES = {
-    'desikahani2': {
-        'base': 'https://www.desikahani2.net',
-        'pages': ['https://www.desikahani2.net/videos/'],
-        'selector': 'div.item',
+    'fsiblog5': {
+        'base': 'https://www.fsiblog5.com',
+        'pages': ['https://www.fsiblog5.com/', 'https://www.fsiblog5.com/page/2/'],
+        'selector': 'article.post',
     },
     'viralkand': {
         'base': 'https://viralkand.com',
-        'pages': ['https://viralkand.com/'],
-        'selector': 'article.post',
-    },
-    'fsiblog5': {
-        'base': 'https://www.fsiblog5.com',
-        'pages': ['https://www.fsiblog5.com/'],
+        'pages': ['https://viralkand.com/', 'https://viralkand.com/page/2/'],
         'selector': 'article.post',
     },
 }
 
+# Video player domains to extract
+VIDEO_DOMAINS = [
+    'streamtape', 'dood', 'mixdrop', 'streamlare', 'vidoza',
+    'upstream', 'voe', 'filemoon', 'fembed', 'streamsb',
+    'videovard', 'streamwish', 'mp4upload', 'sendvid'
+]
+
 # Ad domains to reject
 AD_DOMAINS = [
     'doubleclick', 'googlesyndication', 'ads', 'adserver', 'banner',
-    'popup', 'track', 'analytics', 'pixel', 'affiliate', 'promo',
-    'sync', 'tag', 'impression', 'adnxs', 'adsystem', 'adform'
-]
-
-# Video player domains to accept
-VIDEO_DOMAINS = [
-    'streamtape', 'dood', 'mixdrop', 'streamlare', 'vidoza',
-    'upstream', 'voe', 'filemoon', 'fembed', 'streamsb'
+    'popup', 'track', 'analytics', 'pixel', 'affiliate', 'promo'
 ]
 
 def get_posts(url, selector):
@@ -78,8 +74,12 @@ def get_posts(url, selector):
     except:
         return []
 
-def extract_video(post_url, base):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': base}
+def extract_video_player(post_url, base):
+    """Extract ONLY the video player URL from post page"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': base
+    }
     
     try:
         response = requests.get(post_url, headers=headers, timeout=30)
@@ -87,8 +87,9 @@ def extract_video(post_url, base):
             return None
         
         soup = BeautifulSoup(response.content, 'html.parser')
+        html_content = str(response.content)
         
-        # Find iframes
+        # Method 1: Find iframe with video player
         iframes = soup.find_all('iframe', src=True)
         
         for iframe in iframes:
@@ -97,7 +98,7 @@ def extract_video(post_url, base):
             if not src or not src.startswith('http'):
                 continue
             
-            # Reject ads
+            # Skip ads
             if any(ad in src.lower() for ad in AD_DOMAINS):
                 continue
             
@@ -105,8 +106,22 @@ def extract_video(post_url, base):
             if any(vd in src.lower() for vd in VIDEO_DOMAINS):
                 return src
         
-        # Fallback
-        return post_url
+        # Method 2: Search HTML source for video URLs
+        video_patterns = [
+            r'https?://(?:' + '|'.join(VIDEO_DOMAINS) + r')[^\s"\'<>]+',
+            r'"file"\s*:\s*"([^"]+\.m3u8[^"]*)"',
+            r'"file"\s*:\s*"([^"]+\.mp4[^"]*)"'
+        ]
+        
+        for pattern in video_patterns:
+            matches = re.findall(pattern, html_content, re.IGNORECASE)
+            if matches:
+                url = matches[0] if isinstance(matches[0], str) else matches[0]
+                if url.startswith('http'):
+                    return url
+        
+        return None
+        
     except:
         return None
 
@@ -120,7 +135,7 @@ def scrape_site(name, config):
     for page_url in config['pages']:
         print(f"\n📄 {page_url}")
         posts = get_posts(page_url, config['selector'])
-        print(f"   {len(posts)} posts")
+        print(f"   {len(posts)} posts found")
         
         for idx, post in enumerate(posts[:5]):  # Limit 5 per page
             print(f"   {idx+1}/5: {post['title'][:40]}...")
@@ -128,12 +143,16 @@ def scrape_site(name, config):
             if not post['url'].startswith('http'):
                 post['url'] = config['base'] + post['url']
             
-            embed = extract_video(post['url'], config['base'])
+            # EXTRACT REAL VIDEO PLAYER
+            player_url = extract_video_player(post['url'], config['base'])
             
-            if not embed:
+            if not player_url:
+                print(f"      ❌ No player found")
                 continue
             
-            video_id = f"{name}-{abs(hash(embed)) % 1000000}"
+            print(f"      ✅ Player: {player_url[:50]}...")
+            
+            video_id = f"{name}-{abs(hash(player_url)) % 1000000}"
             
             all_videos.append({
                 'id': video_id,
@@ -141,22 +160,22 @@ def scrape_site(name, config):
                 'description': f'Video from {name}',
                 'category': name.capitalize(),
                 'duration': '00:00',
-                'embedUrl': embed,
+                'embedUrl': player_url,  # NOW THIS IS THE PLAYER, NOT PAGE
                 'thumbnailUrl': post['thumb'],
                 'tags': [name],
                 'uploadedAt': datetime.utcnow().isoformat() + 'Z',
                 'views': 0
             })
             
-            time.sleep(1)
+            time.sleep(1.5)
         
         time.sleep(2)
     
-    print(f"✅ {name}: {len(all_videos)} videos")
+    print(f"✅ {name}: {len(all_videos)} video players extracted")
     return all_videos
 
 def main():
-    print("🚀 UNIVERSAL SCRAPER (AD-FILTERED)")
+    print("🚀 UNIVERSAL SCRAPER - VIDEO PLAYERS ONLY")
     
     all_videos = []
     
@@ -182,8 +201,8 @@ def main():
     with open('data/videos.json', 'w') as f:
         json.dump(combined, f, indent=2)
     
-    print(f"\n✅ Total new: {len(new_videos)}")
-    print(f"✅ Total: {len(combined)}")
+    print(f"\n✅ Total new players: {len(new_videos)}")
+    print(f"✅ Total videos: {len(combined)}")
 
 if __name__ == '__main__':
     main()
