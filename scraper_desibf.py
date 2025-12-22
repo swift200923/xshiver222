@@ -1,10 +1,11 @@
-# scraper_desibf.py - DESIBF ONLY (WORKING)
+# scraper_desibf.py - EXTRACT REAL VIDEO PLAYER ONLY
 import requests
 from bs4 import BeautifulSoup
 import json
 from datetime import datetime
 import time
 import os
+import re
 
 def get_posts(page_num):
     """Get video posts from desibf.com"""
@@ -21,7 +22,6 @@ def get_posts(page_num):
         soup = BeautifulSoup(response.content, 'html.parser')
         posts = []
         
-        # Desibf uses article tags
         articles = soup.find_all('article')
         
         for article in articles:
@@ -54,8 +54,8 @@ def get_posts(page_num):
         print(f"  Error: {e}")
         return []
 
-def extract_video(post_url):
-    """Extract actual video URL from post page"""
+def extract_video_player(post_url):
+    """Extract ONLY the video player iframe URL, not the post page"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://desibf.com/'
@@ -67,45 +67,57 @@ def extract_video(post_url):
             return None
         
         soup = BeautifulSoup(response.content, 'html.parser')
+        html_content = str(response.content)
         
-        # Find all iframes
+        # Method 1: Find iframe with video player domains
         iframes = soup.find_all('iframe')
+        
+        video_domains = [
+            'streamtape', 'dood', 'mixdrop', 'streamlare', 
+            'vidoza', 'upstream', 'voe', 'filemoon', 'fembed',
+            'streamsb', 'videovard', 'streamwish'
+        ]
         
         for iframe in iframes:
             src = iframe.get('src', '').strip()
             
-            # Skip ads - only accept video player iframes
             if not src or not src.startswith('http'):
                 continue
             
-            # Reject ad domains
-            ad_domains = [
-                'doubleclick', 'googlesyndication', 'ads', 'adserver', 
-                'banner', 'popup', 'track', 'analytics', 'pixel',
-                'affiliate', 'promo', 'sync', 'tag', 'impression'
-            ]
-            
-            if any(ad in src.lower() for ad in ad_domains):
+            # Skip ads
+            ad_keywords = ['doubleclick', 'googlesyndication', 'ads', 'adserver', 'banner']
+            if any(ad in src.lower() for ad in ad_keywords):
                 continue
             
-            # Accept video player domains
-            video_domains = [
-                'streamtape', 'dood', 'mixdrop', 'streamlare', 
-                'vidoza', 'upstream', 'voe', 'filemoon'
-            ]
-            
-            # If it contains video player domain OR is generic iframe, accept it
+            # Accept video players
             if any(vd in src.lower() for vd in video_domains):
+                print(f"      ✅ Found player: {src[:50]}...")
                 return src
         
-        # Fallback: return post URL
-        return post_url
+        # Method 2: Search for video URLs in page source
+        video_patterns = [
+            r'https?://[^"\']*(?:streamtape|dood|mixdrop|streamlare|vidoza|upstream|voe|filemoon)[^"\']*',
+            r'"file":"([^"]+\.m3u8[^"]*)"',
+            r'"file":"([^"]+\.mp4[^"]*)"'
+        ]
         
-    except:
+        for pattern in video_patterns:
+            matches = re.findall(pattern, html_content)
+            if matches:
+                url = matches[0] if isinstance(matches[0], str) else matches[0]
+                if url.startswith('http'):
+                    print(f"      ✅ Found embed: {url[:50]}...")
+                    return url
+        
+        print(f"      ❌ No video player found")
+        return None
+        
+    except Exception as e:
+        print(f"      ❌ Error: {e}")
         return None
 
 def main():
-    print("🔍 Scraping DESIBF.COM")
+    print("🔍 Scraping DESIBF.COM - VIDEO PLAYERS ONLY")
     
     all_videos = []
     
@@ -117,13 +129,13 @@ def main():
         for idx, post in enumerate(posts[:10]):
             print(f"   {idx+1}/10: {post['title'][:45]}...")
             
-            embed = extract_video(post['url'])
+            # THIS IS THE KEY FIX - extract real video player
+            player_url = extract_video_player(post['url'])
             
-            if not embed:
-                print(f"      ❌ No video")
+            if not player_url:
                 continue
             
-            video_id = f"desibf-{abs(hash(embed)) % 1000000}"
+            video_id = f"desibf-{abs(hash(player_url)) % 1000000}"
             
             all_videos.append({
                 'id': video_id,
@@ -131,7 +143,7 @@ def main():
                 'description': 'Desi BF video',
                 'category': 'Desi',
                 'duration': '00:00',
-                'embedUrl': embed,
+                'embedUrl': player_url,  # Now this is the PLAYER, not the page
                 'thumbnailUrl': post['thumb'],
                 'tags': ['desibf', 'desi'],
                 'uploadedAt': datetime.utcnow().isoformat() + 'Z',
@@ -149,7 +161,7 @@ def main():
     except:
         existing = []
     
-    # Dedupe
+    # Dedupe by embedUrl
     existing_urls = {v.get('embedUrl') for v in existing}
     new_videos = [v for v in all_videos if v['embedUrl'] not in existing_urls]
     
@@ -160,7 +172,7 @@ def main():
     with open('data/videos.json', 'w') as f:
         json.dump(combined, f, indent=2)
     
-    print(f"\n✅ Scraped: {len(new_videos)} new")
+    print(f"\n✅ Scraped: {len(new_videos)} new video players")
     print(f"✅ Total: {len(combined)}")
 
 if __name__ == '__main__':
