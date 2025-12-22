@@ -3,7 +3,7 @@ name: Scrape Shady Videos
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'  # Every 6 hours
 
 jobs:
   scrape:
@@ -38,5 +38,5 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "chore: update scraped videos"
+          git commit -m "chore: update scraped videos [skip ci]"
           git push
