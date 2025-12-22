@@ -9,7 +9,7 @@ import re
 
 def get_posts(page_num):
     """Get video posts from desibf.com"""
-    url = f"https://desibf.com/page/{page_num}/" if page_num > 1 else "https://desibf.com/"
+    url = f"https://mydesi.click/page/{page_num}/" if page_num > 1 else "https://mydesi.click/"
     
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
