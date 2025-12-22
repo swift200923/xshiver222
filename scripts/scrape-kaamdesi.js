@@ -2,13 +2,29 @@ import fs from "fs";
 import path from "path";
 import { chromium } from "playwright";
 
-const BASE = "https://kaamdesi.com";
+/* ===================== CONFIG ===================== */
+
+const BASE = "https://desimyhub.net/latest/"; // 🔁 CHANGE SITE HERE
 const PAGES = [
   `${BASE}/`,
   `${BASE}/page/2/`,
 ];
 
+/* Known ad / junk sources to ignore */
+const BLOCKED_SRC = [
+  "ads",
+  "doubleclick",
+  "googlesyndication",
+  "afcdn",
+  "pop",
+  "traffic",
+];
+
+/* ===================== FILE ===================== */
+
 const DATA_PATH = path.resolve("data/videos.json");
+
+/* ===================== HELPERS ===================== */
 
 function loadExisting() {
   try {
@@ -26,75 +42,109 @@ function makeId(str) {
   return "vid-" + Buffer.from(str).toString("base64").slice(0, 32);
 }
 
+function isBlocked(url = "") {
+  return BLOCKED_SRC.some(b => url.toLowerCase().includes(b));
+}
+
+/* ===================== MAIN ===================== */
+
 async function run() {
-  console.log("🔍 Scraping kaamdesi.com (Playwright)");
+  console.log("▶ Scraper started");
 
   const existing = loadExisting();
   const seen = new Set(existing.map(v => v.embedUrl));
   const results = [...existing];
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({
+  const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
   });
 
+  const page = await context.newPage();
+
   for (const url of PAGES) {
-    console.log("📄 Opening:", url);
+    console.log("📄 Listing:", url);
+
     await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const cards = await page.$$("a.video");
+    /* UNIVERSAL CARD SELECTOR (fallback chain) */
+    let cards = await page.$$("a.video");
+    if (!cards.length) cards = await page.$$("article a[href]");
+    if (!cards.length) cards = await page.$$(".post a[href]");
+    if (!cards.length) cards = await page.$$("a[href]");
+
     console.log(`Found ${cards.length} cards`);
 
     for (const card of cards) {
       try {
         const href = await card.getAttribute("href");
-        if (!href) continue;
+        if (!href || href.startsWith("#")) continue;
 
         const postUrl = href.startsWith("http") ? href : BASE + href;
 
+        /* TITLE */
         const title =
-          (await card.$eval(".vtitle", el => el.textContent?.trim()).catch(() => null)) ||
+          (await card.$eval("h1", el => el.textContent.trim()).catch(() => null)) ||
+          (await card.$eval("h2", el => el.textContent.trim()).catch(() => null)) ||
+          (await card.$eval("h3", el => el.textContent.trim()).catch(() => null)) ||
           (await card.getAttribute("title")) ||
-          "Kaamdesi Video";
+          "Video";
 
+        /* THUMB */
         const thumbnail =
           (await card.$eval("img", el => el.src).catch(() => "")) || "";
 
+        /* DURATION (optional) */
         const duration =
-          (await card.$eval(".time.clock", el => el.textContent?.trim()).catch(() => "00:00")) ||
-          "00:00";
+          (await card
+            .$eval(".time, .clock, .duration", el => el.textContent.trim())
+            .catch(() => "00:00")) || "00:00";
 
-        // open post page
-        const post = await browser.newPage();
+        /* OPEN POST PAGE */
+        const post = await context.newPage();
         await post.goto(postUrl, { waitUntil: "networkidle", timeout: 60000 });
         await post.waitForTimeout(2000);
 
-        let embedUrl =
-          (await post.$eval("iframe", el => el.src).catch(() => null)) ||
-          (await post.$eval("video source", el => el.src).catch(() => null));
+        /* EMBED EXTRACTION (FILTER ADS) */
+        let embedUrl = null;
+
+        const iframeUrls = await post.$$eval("iframe", els =>
+          els.map(el => el.src).filter(Boolean)
+        );
+
+        embedUrl = iframeUrls.find(src => !src.startsWith("blob:") && !src.includes("about:"));
+
+        if (embedUrl && isBlocked(embedUrl)) embedUrl = null;
+
+        if (!embedUrl) {
+          const videoUrls = await post.$$eval("video source", els =>
+            els.map(el => el.src).filter(Boolean)
+          );
+          embedUrl = videoUrls.find(src => !isBlocked(src)) || null;
+        }
 
         await post.close();
 
         if (!embedUrl || seen.has(embedUrl)) continue;
 
-        const video = {
+        /* SAVE */
+        results.push({
           id: makeId(embedUrl),
           title,
-          description: "Video from kaamdesi.com",
+          description: `Video from ${new URL(BASE).hostname}`,
           category: "Viral",
           duration,
           embedUrl,
           thumbnailUrl: thumbnail,
-          tags: ["kaamdesi"],
+          tags: [new URL(BASE).hostname],
           uploadedAt: new Date().toISOString(),
           views: 0,
-        };
+        });
 
-        results.push(video);
         seen.add(embedUrl);
-        console.log("➕ Added:", title.slice(0, 50));
+        console.log("➕ Added:", title.slice(0, 60));
       } catch {
         continue;
       }
