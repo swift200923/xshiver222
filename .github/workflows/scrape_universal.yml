@@ -26,6 +26,13 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
           git add data/videos.json
-          git commit -m "update universal videos [skip ci]" || echo "No changes"
-          git pull --rebase origin main || true
-          git push origin main
+          git commit -m "update universal videos [skip ci]" || exit 0
+          for i in {1..5}; do
+            git pull --rebase origin main && git push origin main && break || {
+              git rebase --abort
+              git reset --hard origin/main
+              python scraper_universal.py
+              git add data/videos.json
+              git commit -m "update universal videos [skip ci]"
+            }
+          done
