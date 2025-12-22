@@ -23,9 +23,11 @@ jobs:
       - run: python scraper_fsiblog5.py
       
       - run: |
-          git config user.name "GitHub Action"
+      git config user.name "GitHub Action"
           git config user.email "action@github.com"
+          git stash
           git pull --rebase origin main
+          git stash pop || true
           git add data/videos.json
           git diff --cached --quiet || git commit -m "update videos [skip ci]"
           git push origin main
