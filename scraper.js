@@ -16,7 +16,7 @@ async function scrapeSite(targetUrl) {
   await page.goto(targetUrl, { waitUntil: 'networkidle' });
   await page.waitForTimeout(5000);
 
-  // remove shady overlays/ads
+  // kill overlays/ads
   await page.evaluate(() => {
     document
       .querySelectorAll(
@@ -26,35 +26,31 @@ async function scrapeSite(targetUrl) {
   });
 
   const videos = await page.evaluate(() => {
-    const cards = document.querySelectorAll(
-      'a[href*="/watch"], a[href*="/video"], a[href*="/play"], .video-item, article, .post'
-    );
+    // fsiblog: each video is an <article> with a link+thumb+title
+    const cards = document.querySelectorAll('article');
 
     const out = [];
     cards.forEach((card, index) => {
-      const href = card.href || card.getAttribute('href') || '';
+      const link = card.querySelector('a');
+      if (!link) return;
+
+      const href = link.href || link.getAttribute('href') || '';
+      const titleEl =
+        card.querySelector('h2, h3, .entry-title, .title') ||
+        link.querySelector('h2, h3');
       const title =
-        card.querySelector('h1,h2,h3,h4,.title')?.textContent?.trim() ||
-        'No Title';
+        titleEl?.textContent?.trim().replace(/\s+/g, ' ') || 'No Title';
 
-      const imgEl =
-        card.querySelector('img') ||
-        document.querySelector('meta[property="og:image"]');
-      const thumb = imgEl?.src || imgEl?.content || '';
+      const imgEl = card.querySelector('img');
+      const thumb = imgEl?.src || imgEl?.getAttribute('data-src') || '';
 
-      // priority 1: iframe on card
-      let embed = '';
-      const iframe = card.querySelector(
-        'iframe[src*="embed"], iframe[src*="player"], iframe[src*="video"]'
-      );
-      if (iframe) embed = iframe.src;
-
-      // priority 2: detail page URL if no iframe
-      if (!embed) embed = href;
+      // fsiblog uses MMSBaba embeds on detail page,
+      // but for now we just store the post URL as embed target
+      const embed = href;
 
       if (href) {
         out.push({
-          id: `v_${Date.now()}_${index}`,
+          id: `fsi_${Date.now()}_${index}`,
           title: title.slice(0, 120),
           thumbnail: thumb,
           embed,
@@ -63,6 +59,7 @@ async function scrapeSite(targetUrl) {
       }
     });
 
+    // return up to 20 videos from this page
     return out.slice(0, 20);
   });
 
