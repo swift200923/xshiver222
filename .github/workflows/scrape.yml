@@ -1,9 +1,9 @@
-name: Scrape Videos
+name: Scrape Kaamdesi
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: "0 3 * * *" # once per day
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -17,23 +17,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Playwright
-        run: |
-          npm init -y
-          npm install playwright
-          npx playwright install --with-deps chromium
+      - run: npm install
 
-      - name: Run scraper
-        run: node scraper.js
+      - run: node scripts/scrape-kaamdesi.js
 
-      - name: Commit updates
-        run: |
-          git config user.name "GitHub Action"
-          git config user.email "action@github.com"
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add data/videos.json
-          if git diff --cached --quiet; then
-            echo "No changes"
-            exit 0
-          fi
-          git commit -m "chore: update videos.json"
+          git diff --cached --quiet || git commit -m "update videos.json"
           git push
