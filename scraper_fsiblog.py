@@ -1,4 +1,4 @@
-# scraper_fsiblog.py - FSIBLOG.CC -> MMSBABA PLAYER
+# scraper_fsiblog.py - FSIBLOG.CC: scrape posts, extract clean iframe players
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -22,11 +22,23 @@ HEADERS = {
     )
 }
 
-MMS_EMBED_TEMPLATE = "https://mmsbaba.co/embed.php?id={video_id}"  # fsiblog uses mmsbaba embeds[web:59]
+# Known video hosts used by fsiblog posts (mmsbaba + others).[web:53][web:59]
+VIDEO_HOSTS = [
+    "mmsbaba.co",
+    "streamtape", "dood", "mixdrop", "streamlare", "vidoza",
+    "upstream", "voe", "filemoon", "fembed", "streamsb",
+    "videovard", "streamwish", "mp4upload", "sendvid",
+]
+
+# Ad / tracking domains to skip
+AD_KEYWORDS = [
+    "doubleclick", "googlesyndication", "adservice", "adsystem",
+    "adserver", "banner", "track", "analytics", "pixel", "popunder",
+]
 
 
 def get_posts(list_url: str):
-    """Collect post URLs, titles, thumbnails from a listing page."""
+    """Go to fsiblog.cc listing page and collect post URLs + meta."""
     try:
         r = requests.get(list_url, headers=HEADERS, timeout=30)
         if r.status_code != 200:
@@ -36,6 +48,7 @@ def get_posts(list_url: str):
         soup = BeautifulSoup(r.content, "html.parser")
         posts = []
 
+        # fsiblog listing pages use <article> per post.[web:41][web:66]
         for art in soup.find_all("article"):
             a = art.find("a", href=True)
             if not a:
@@ -45,13 +58,16 @@ def get_posts(list_url: str):
             if not href.startswith("http"):
                 href = BASE.rstrip("/") + href
 
+            # skip taxonomy pages
             if any(x in href for x in ["/tag/", "/category/"]):
                 continue
 
+            # title
             h = art.find(["h1", "h2", "h3"])
             title = (h.get_text(strip=True) if h else a.get("title") or "Video").strip()
             title = title.replace("\n", " ")[:150]
 
+            # thumbnail
             img = art.find("img")
             thumb = ""
             if img:
@@ -68,8 +84,11 @@ def get_posts(list_url: str):
         return []
 
 
-def extract_video_id(post_url: str):
-    """Find VIDEO_ID used in mmsbaba embed for a single fsiblog post."""
+def extract_clean_iframe(post_url: str):
+    """
+    Go to a single fsiblog post, find the real video iframe, and
+    return a cleaned iframe URL that bypasses page ads.
+    """
     try:
         r = requests.get(post_url, headers=HEADERS, timeout=30)
         if r.status_code != 200:
@@ -79,25 +98,30 @@ def extract_video_id(post_url: str):
         html = r.text
         soup = BeautifulSoup(html, "html.parser")
 
-        # 1) Direct iframe
+        # 1) Look for iframe elements
         for iframe in soup.find_all("iframe", src=True):
             src = iframe["src"].strip()
-            if "mmsbaba.co" in src:
-                m = re.search(r"id=([A-Za-z0-9_-]+)", src)
-                if m:
-                    return m.group(1)
 
-        # 2) Any mmsbaba URL in HTML
-        m = re.search(r"https?://mmsbaba\.co/embed\.php\?id=([A-Za-z0-9_-]+)", html)
-        if m:
-            return m.group(1)
+            if not src.startswith("http"):
+                continue
 
-        # 3) Fallback: generic id=XYZ pattern (short alnum)
-        m = re.search(r"id=([A-Za-z0-9]{4,12})", html)
-        if m:
-            return m.group(1)
+            # skip obvious ad / tracking iframes
+            if any(k in src.lower() for k in AD_KEYWORDS):
+                continue
 
-        print("    ❌ no VIDEO_ID found")
+            # accept known video hosts
+            if any(h in src.lower() for h in VIDEO_HOSTS):
+                return src
+
+        # 2) Fallback: search raw HTML for video host URLs
+        pattern = r'https?://[^"\']+(?:' + "|".join(VIDEO_HOSTS) + r')[^"\']*'
+        matches = re.findall(pattern, html, flags=re.IGNORECASE)
+        for url in matches:
+            if any(k in url.lower() for k in AD_KEYWORDS):
+                continue
+            return url
+
+        print("    ❌ no player iframe found")
         return None
 
     except Exception as e:
@@ -106,7 +130,7 @@ def extract_video_id(post_url: str):
 
 
 def main():
-    print("🔍 Scraping FSIBLOG.CC")
+    print("🔍 Scraping FSIBLOG.CC (clean iframes)")
 
     scraped = []
 
@@ -114,32 +138,34 @@ def main():
         print(f"\n📄 Listing: {list_url}")
         posts = get_posts(list_url)
 
+        # Limit per page so you do not explode JSON
         for idx, post in enumerate(posts[:10]):
             print(f"   {idx+1}/{len(posts)}: {post['title'][:60]}")
-            vid_id = extract_video_id(post["url"])
-            if not vid_id:
+            iframe_url = extract_clean_iframe(post["url"])
+            if not iframe_url:
                 continue
 
-            embed_url = MMS_EMBED_TEMPLATE.format(video_id=vid_id)
-            print(f"      ✅ {embed_url}")
+            print(f"      ✅ iframe: {iframe_url[:80]}")
 
-            scraped.append({
-                "id": f"fsiblog-{vid_id}",
+            vid_hash = abs(hash(iframe_url)) % 1_000_000
+            v = {
+                "id": f"fsiblog-{vid_hash}",
                 "title": post["title"],
                 "description": "FSIBlog video",
                 "category": "FSIBlog",
                 "duration": "00:00",
-                "embedUrl": embed_url,
+                "embedUrl": iframe_url,          # this goes straight into your <iframe src=...>
                 "thumbnailUrl": post["thumb"],
                 "tags": ["fsiblog", "desi"],
                 "uploadedAt": datetime.utcnow().isoformat() + "Z",
                 "views": 0,
-            })
-
+            }
+            scraped.append(v)
             time.sleep(1)
 
         time.sleep(2)
 
+    # merge with existing videos.json
     try:
         with open("data/videos.json", "r") as f:
             existing = json.load(f)
